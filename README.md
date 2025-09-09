@@ -10,11 +10,28 @@ Download or clone the repository. Install all the dependencies using uv. We will
 cd openai-agent-paperqa
 uv sync
 ```
+## Usage
 
-### 2. Run Notebook
+You can run this system in two ways:
+
+### Option 1: Run the Jupyter Notebook (Interactive)
+If you want to explore the system interactively and see step-by-step execution:
+
 ```bash
-jupyter notebook agent-paperqa.ipynb
+uv run jupyter lab agent-paperqa.ipynb
 ```
+
+### Option 2: Run the Main Script (Direct execution)
+If you want to run the complete pipeline directly:
+
+```bash
+uv run main.py
+```
+
+This will automatically:
+- Download CDC data if needed
+- Process and index the articles
+- Answer the example research question
 
 ## What it does
 
