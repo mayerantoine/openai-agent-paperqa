@@ -7,7 +7,7 @@ from agents import Agent, Runner, RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 from rich.console import Console
 from vectorstore import VectorStorePaper
-
+from dotenv import load_dotenv
 
 class SessionStatus(TypedDict):
     """Status tracking for agent session."""
@@ -48,7 +48,7 @@ class AgentConfig:
         self.search_k = search_k
         self.max_evidence_pieces = max_evidence_pieces
         self.max_search_attempts = max_search_attempts
-        
+        load_dotenv(override=True)
         # Use same environment variables as RAGEngine for consistency
         if model_name is None:
             # Get provider and model from environment (same as RAGEngine)
