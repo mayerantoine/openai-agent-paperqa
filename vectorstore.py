@@ -1,12 +1,6 @@
 import pandas as pd
 import os
 from sodapy import Socrata
-import pathlib
-import requests
-from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TransferSpeedColumn, DownloadColumn
-from zipfile import ZipFile
-from tqdm.auto import tqdm
-import pathlib
 from typing import Optional, List,Dict,Any
 from parsel import Selector
 from pathlib import Path
@@ -19,8 +13,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 
 class VectorStorePaper():
-    def __init__(self,html_articles,persist_directory,recreate_index=True):
-        self.html_articles= html_articles
+    def __init__(self, html_articles: Optional[Dict[str, Any]] = None, persist_directory: str = "", recreate_index: bool = True):
+        self.html_articles = html_articles
         self.persist_directory = persist_directory
         self.recreate_index = recreate_index
                 # Initialize components
@@ -38,7 +32,7 @@ class VectorStorePaper():
 
         # Check if index already exists
         self.index_exists = self._check_index_exists()
-        
+
         if not self.recreate_index and self.index_exists:
             print(f"Using existing index at {self.persist_directory}")
             print(f"   Set recreate_index=True to force recreation")
@@ -48,27 +42,29 @@ class VectorStorePaper():
             else:
                 print(f"Creating new index at {self.persist_directory}")
 
-        headers_to_split_on = [
-                ("h1", "Title"),           # Article titles (PCD, MMWR)
-                ("h2", "Major Section"),   # Main sections in PCD (Abstract, Methods, Results, Discussion)
-                ("h3", "Section"),         # Main sections in EID/MMWR, subsections in PCD
-                ("h4", "Subsection"),      # Author info, minor sections
-                ("h5", "Detail")           # Detailed subsections
-                    ]
-        self.text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=2000,
-                    chunk_overlap=500,
-                    length_function=len,
-                    separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""])
-        
-        # Create HTMLSectionSplitter
-        self.html_splitter = HTMLSectionSplitter(headers_to_split_on=headers_to_split_on)
+        # Only initialize splitters if we have html_articles to process
+        if self.html_articles is not None:
+            headers_to_split_on = [
+                    ("h1", "Title"),           # Article titles (PCD, MMWR)
+                    ("h2", "Major Section"),   # Main sections in PCD (Abstract, Methods, Results, Discussion)
+                    ("h3", "Section"),         # Main sections in EID/MMWR, subsections in PCD
+                    ("h4", "Subsection"),      # Author info, minor sections
+                    ("h5", "Detail")           # Detailed subsections
+                        ]
+            self.text_splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=2000,
+                        chunk_overlap=500,
+                        length_function=len,
+                        separators=["\n\n", "\n", ".", "!", "?", ",", " ", ""])
+
+            # Create HTMLSectionSplitter
+            self.html_splitter = HTMLSectionSplitter(headers_to_split_on=headers_to_split_on)
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name="all-MiniLM-L6-v2",
             show_progress=False)
-        
-        
+
+
         # Initialize ChromaDB vector store
         self.vectorstore = Chroma(
                     embedding_function=self.embeddings,
@@ -78,19 +74,43 @@ class VectorStorePaper():
     def chunking(self):
         all_chunked_documents: List[Document] = []
 
-        for relative_path, html_content in self.html_articles.items():
-            # First pass: Split by HTML sections
-            html_sections = self.html_splitter.split_text(html_content)
+        # If no html_articles provided, return empty list (index already exists)
+        if self.html_articles is None:
+            return all_chunked_documents
 
-            # Second pass: Apply RecursiveCharacterTextSplitter for size constraints
-            size_constrained_chunks = self.text_splitter.split_documents(html_sections)
-            for i, chunk in enumerate(size_constrained_chunks):
-                chunked_document = Document(
-                                page_content=chunk.page_content,
-                                metadata={"source_path": relative_path}
-                            )
-                all_chunked_documents.append(chunked_document)
-        
+        total_articles = len(self.html_articles)
+
+        try:
+            from tqdm import tqdm
+            progress_bar = tqdm(total=total_articles, desc="Chunking documents", unit="article")
+        except ImportError:
+            progress_bar = None
+            print("   Processing articles (this may take several minutes)...")
+
+        try:
+            for relative_path, content in self.html_articles.items():
+                # First pass: Split by HTML sections
+                html_sections = self.html_splitter.split_text(content['html_content'])
+
+                # Second pass: Apply RecursiveCharacterTextSplitter for size constraints
+                size_constrained_chunks = self.text_splitter.split_documents(html_sections)
+                for i, chunk in enumerate(size_constrained_chunks):
+                    chunked_document = Document(
+                                    page_content=chunk.page_content,
+                                    metadata={"source_path": relative_path,
+                                              "title":content['metadata']['title'],
+                                              "collection":'pcd'}
+                                )
+                    all_chunked_documents.append(chunked_document)
+
+                # Update progress bar
+                if progress_bar:
+                    progress_bar.update(1)
+
+        finally:
+            if progress_bar:
+                progress_bar.close()
+
         return all_chunked_documents
     
     def index_document(self,all_chunked_documents,batch_size=50):
@@ -110,17 +130,9 @@ class VectorStorePaper():
             for i in range(0, len(all_chunked_documents), batch_size):
                 batch = all_chunked_documents[i:i + batch_size]
                 
-                if i == 0:
-                    # Create initial vectorstore with first batch
-                    langchain_vectorstore = Chroma.from_documents(
-                        documents=batch,
-                        embedding=self.embeddings,
-                        persist_directory=self.persist_directory
-                    )
-                else:
-                    # Add remaining batches to existing vectorstore
-                    if langchain_vectorstore is not None:
-                        langchain_vectorstore.add_documents(batch)
+                # Add remaining batches to existing vectorstore
+                if self.vectorstore is not None:
+                    self.vectorstore.add_documents(batch)
                 
                 processed_count += len(batch)
                 

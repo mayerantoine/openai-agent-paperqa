@@ -9,7 +9,7 @@ from tqdm.auto import tqdm
 import pathlib
 from langchain_huggingface import HuggingFaceEmbeddings as lgHuggingFaceEmbeddings
 from tqdm import tqdm
-
+from langchain_community.document_loaders import BSHTMLLoader
 
 
 def get_data_directory() -> pathlib.Path:
@@ -73,7 +73,15 @@ def _load_html_file(file_path_name: str) -> str:
             try:
                 with open(file_path_name, encoding=encoding) as f:
                     html_content = f.read()
-                return html_content
+                
+                loader = BSHTMLLoader(
+                    file_path=file_path_name,
+                    open_encoding=encoding)
+                docs = []
+                docs_lazy = loader.lazy_load()
+                for doc in docs_lazy:
+                    docs.append(doc)
+                return html_content, docs[0].metadata
             except UnicodeDecodeError:
                 # Try next encoding
                 continue
@@ -92,6 +100,45 @@ def _load_html_file(file_path_name: str) -> str:
             f'Unable to decode {file_path_name} with any of the tried encodings: {encodings_to_try}'
         )
 
+
+def _load_bs_html(file_path_name: str) -> str:
+
+    encodings_to_try = ['utf-8', 'unicode_escape', 'latin-1']
+
+    for encoding in encodings_to_try:
+        try :
+            loader = BSHTMLLoader(
+                file_path=file_path_name,
+                open_encoding=encoding
+            )
+            docs = []
+            docs_lazy = loader.lazy_load()
+
+            # async variant:
+            # docs_lazy = await loader.alazy_load()
+            #print(len(list(docs_lazy)))
+            for doc in docs_lazy:
+                docs.append(doc)
+            #print(docs[0].metadata)
+            #print(docs[0].page_content)
+            return docs[0].page_content,docs[0].metadata
+        except UnicodeDecodeError:
+                # Try next encoding
+                continue
+        except FileNotFoundError:
+                print(f"File not found: {file_path_name}")
+                raise FileNotFoundError(f'Unable to find HTML file: {file_path_name}')
+        except Exception as e:
+                # For other errors, try next encoding
+                print(f"Error reading {file_path_name} with {encoding}: {e}")
+                continue
+        
+        # If all encodings failed
+        raise UnicodeDecodeError(
+            'multiple_encodings', 
+            b'', 0, 0, 
+            f'Unable to decode {file_path_name} with any of the tried encodings: {encodings_to_try}'
+        )
 
 def load_html_files():    
     data_dir = get_data_directory()
@@ -122,9 +169,12 @@ def load_html_files():
                     continue
                 try:
                     # Use the existing _load_html_file method for consistency
-                    html_content = _load_html_file(str(file_path))
+                    html_content,metadata = _load_html_file(str(file_path))
+                    #html_content,metadata = _load_bs_html(str(file_path))
                     # Use the relative path as the key to maintain structure
-                    articles_html[str(relative_path)] = html_content
+                    articles_html[str(relative_path)] = {"html_content":html_content,
+                                                         "metadata":metadata}
+              
                 except Exception as e:
                     print(f"Error reading {file_path}: {e}")
                     continue
@@ -132,3 +182,14 @@ def load_html_files():
             
     print(f"Loaded {len(articles_html)} HTML articles")
     return articles_html
+
+
+if __name__=="__main__":
+    data = load_html_files()
+    meta =[]
+    for k,v in data.items():
+        meta.append(v['metadata'])
+
+    df = pd.DataFrame(meta)
+    print(df['title'])
+    df.to_csv("data.csv")

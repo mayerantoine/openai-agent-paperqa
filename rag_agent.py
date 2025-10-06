@@ -158,11 +158,14 @@ class AgentToolFactory:
             results = await asyncio.gather(*tasks)
             print(f"🟢 [Gather] Finished gathering evidence for question: {question}")
 
+            #for item in zip(results,chunks):
+            #    print(item[0].score, item[1]['title'],)
+
             # Filter high-quality evidence
             top_evidence_context = [
-                (result.score, result.relevant_information_summary) 
-                for result in results 
-                if result.score >= self.config.relevance_cutoff
+                (item[0].score, item[0].relevant_information_summary,item[1]['title'],item[1]['content']) 
+                for item in zip(results,chunks)
+                if item[0].score >= self.config.relevance_cutoff
             ]
             count_top_evidence = len(top_evidence_context)
 
@@ -171,6 +174,7 @@ class AgentToolFactory:
             state.context.status['Evidence'] = len(state.context.evidence_library)
             state.context.status['Relevant'] = len(state.context.evidence_library)
 
+            # joining the relevant_information_summary
             best_evidence = "\n".join([evidence[1] for evidence in state.context.evidence_library])
             print(state.context.status)
             
@@ -180,7 +184,7 @@ class AgentToolFactory:
     
     def create_answer_tool(self):
         """Create the answer generation tool."""
-        
+
         def get_answer_instructions(state: RunContextWrapper[SessionState], agent) -> str:
             """Generate dynamic instructions for answer agent."""
             context_evidence = "\n".join([evidence[1] for evidence in state.context.evidence_library])
@@ -193,7 +197,6 @@ class AgentToolFactory:
             )
             instructions += f"\n## Context: {context_evidence}"
             instructions += f"\n## Question: {state.context.original_question}"
-
             return instructions
 
         answer_agent = Agent[SessionState](
@@ -202,11 +205,20 @@ class AgentToolFactory:
             model=self.config.model_name,
         )
 
-        generate_answer = answer_agent.as_tool(
-            tool_name="generate_answer",
-            tool_description="Use this tool to generate a proposed answer to the question when you have collected enough evidence"
-        )
-        
+        @function_tool
+        async def generate_answer(state: "RunContextWrapper[SessionState]") -> str:
+            """Use this tool to generate a proposed answer to the question when you have collected enough evidence"""
+
+            # Print message before LLM call
+            print(f"🟡 [Answer] Generating answer based on {len(state.context.evidence_library)} pieces of evidence...")
+
+            # Call the answer agent
+            result = await Runner.run(answer_agent, input="", context=state.context)
+
+            print(f"🟢 [Answer] Answer generated successfully")
+
+            return result.final_output
+
         return generate_answer
     
     def _print_status(self, status: Dict[str, int]) -> None:
@@ -249,9 +261,6 @@ class AgenticRAG:
         """Get collection-specific instructions."""
         collection_map = {
             'pcd': 'Preventing Chronic Disease',
-            'eid': 'Emerging Infectious Diseases', 
-            'mmwr': 'Morbidity and Mortality Weekly Report',
-            'all': 'CDC'
         }
         
         collection_name = collection_map.get('pcd')
@@ -319,7 +328,7 @@ class AgenticRAG:
             max_turns=max_turns
         )
         
-        return result.final_output
+        return result.final_output, result.context_wrapper.context
     
     def get_session_status(self, session_state: SessionState) -> Dict[str, int]:
         """Get current session status."""
