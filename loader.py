@@ -140,46 +140,86 @@ def _load_bs_html(file_path_name: str) -> str:
             f'Unable to decode {file_path_name} with any of the tried encodings: {encodings_to_try}'
         )
 
-def load_html_files():    
+def load_html_files():
     data_dir = get_data_directory()
     collection_base_dir = data_dir / "html-outputs" / "pcd"
     articles_html = {}
     folder_to_scan = "issues"
     target_dir = collection_base_dir / folder_to_scan
+
+    # Pre-count total files for progress bar
+    total_files = 0
     for root, dirs, files in os.walk(target_dir):
         for file in files:
             if file.endswith('.htm') or file.endswith('.html'):
-                file_path = pathlib.Path(root) / file
-                relative_path = file_path.relative_to(collection_base_dir)
-            
-                #Filter out non-content files
                 file_lower = file.lower()
-                if ('cover' in file_lower or 
-                   'ac-' in file_lower or
-                   'toc' in file_lower or
-                   'index' in file_lower or
-                   'archive' in file_lower):
-                   continue
-                # filter Erratum
+                # Apply same filters as main loop
+                if ('cover' in file_lower or
+                    'ac-' in file_lower or
+                    'toc' in file_lower or
+                    'index' in file_lower or
+                    'archive' in file_lower):
+                    continue
                 if file.endswith('e.htm'):
                     continue
-
-                # Skip non-English files (those ending with language codes)
                 if file.endswith(('_es.htm', '_fr.htm', '_zhs.htm', '_zht.htm')):
                     continue
-                try:
-                    # Use the existing _load_html_file method for consistency
-                    html_content,metadata = _load_html_file(str(file_path))
-                    #html_content,metadata = _load_bs_html(str(file_path))
-                    # Use the relative path as the key to maintain structure
-                    articles_html[str(relative_path)] = {"html_content":html_content,
-                                                         "metadata":metadata}
-              
-                except Exception as e:
-                    print(f"Error reading {file_path}: {e}")
-                    continue
-                
-            
+                total_files += 1
+
+    # Initialize progress bar (same pattern as chunking/index_document)
+    try:
+        from tqdm import tqdm
+        progress_bar = tqdm(total=total_files, desc="Loading HTML articles", unit="file")
+    except ImportError:
+        progress_bar = None
+        print("   Loading HTML articles (this may take several minutes)...")
+
+    try:
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                if file.endswith('.htm') or file.endswith('.html'):
+                    file_path = pathlib.Path(root) / file
+                    relative_path = file_path.relative_to(collection_base_dir)
+
+                    #Filter out non-content files
+                    file_lower = file.lower()
+                    if ('cover' in file_lower or
+                       'ac-' in file_lower or
+                       'toc' in file_lower or
+                       'index' in file_lower or
+                       'archive' in file_lower):
+                       continue
+                    # filter Erratum
+                    if file.endswith('e.htm'):
+                        continue
+
+                    # Skip non-English files (those ending with language codes)
+                    if file.endswith(('_es.htm', '_fr.htm', '_zhs.htm', '_zht.htm')):
+                        continue
+                    try:
+                        # Use the existing _load_html_file method for consistency
+                        html_content,metadata = _load_html_file(str(file_path))
+                        #html_content,metadata = _load_bs_html(str(file_path))
+                        # Use the relative path as the key to maintain structure
+                        articles_html[str(relative_path)] = {"html_content":html_content,
+                                                             "metadata":metadata}
+
+                        # Update progress bar
+                        if progress_bar:
+                            progress_bar.update(1)
+
+                    except Exception as e:
+                        print(f"Error reading {file_path}: {e}")
+                        # Still update progress even on error
+                        if progress_bar:
+                            progress_bar.update(1)
+                        continue
+
+    finally:
+        if progress_bar:
+            progress_bar.close()
+
+
     print(f"Loaded {len(articles_html)} HTML articles")
     return articles_html
 
